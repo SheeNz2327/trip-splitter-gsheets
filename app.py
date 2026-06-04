@@ -3,6 +3,8 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import uuid
 import base64
+from PIL import Image
+import io
 
 # 1. ตั้งค่าหน้าเว็บ
 st.set_page_config(page_title="Trip Splitter Cloud", page_icon="🧳", layout="centered")
@@ -28,6 +30,19 @@ custom_css = """
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
+
+# 🌟 ฟังก์ชันบีบอัดรูปภาพให้เล็กลงก่อนส่งเข้า Google Sheets
+def compress_image(uploaded_file):
+    img = Image.open(uploaded_file)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    # ย่อขนาดให้เหลือความกว้าง/ยาวสูงสุดแค่ 300px
+    img.thumbnail((300, 300))
+    buffer = io.BytesIO()
+    # บีบอัดคุณภาพเหลือ 40%
+    img.save(buffer, format="JPEG", quality=40)
+    b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+    return b64_str
 
 # 🌟 ฟังก์ชันดักจับสถานะ บล็อกบั๊กการแปลงค่าเพี้ยนของ Google Sheets
 def is_settled_true(val):
@@ -164,7 +179,6 @@ if st.session_state.current_trip:
             for idx, row in df_trip_exp.iloc[::-1].iterrows():
                 box_col, del_col = st.columns([5, 1])
                 with box_col:
-                    # 🌟 เรียกใช้ฟังก์ชันตรวจสอบแบบดักทุกทางในหน้าประวัติบิล
                     status = "🟢 [เคลียร์หน้างานแล้ว]" if is_settled_true(row["settled"]) else "⏳ [ค้างเคลียร์ยอด]"
                     st.info(f"**{row['item']}** ({float(row['amount']):,.2f} บาท) {status}\n\n👤 จ่ายโดย: {row['payer']} | 👥 หาร: {row['involved']}")
                 
@@ -197,7 +211,6 @@ if st.session_state.current_trip:
             for idx, row in df_trip_exp.iterrows():
                 amt = float(row["amount"])
                 total_trip_cost += amt
-                # 🌟 เรียกใช้ฟังก์ชันตรวจสอบแบบดักทุกทางในระบบคำนวณหนี้สิน (บิลที่จ่ายแล้วจะไม่นำมาคิดหนี้)
                 if is_settled_true(row["settled"]): continue
                 
                 inv_list = [p.strip() for p in row["involved"].split(",") if p.strip() in balances]
@@ -239,11 +252,23 @@ if st.session_state.current_trip:
                     with st.expander(f"🧾 สลิปจาก {t['from']} โอนให้ {t['to']} ({t['amount']:,.2f} ฿)"):
                         uploaded_slips = st.file_uploader("เลือกรูปสลิปจากมือถือ", type=['png', 'jpg', 'jpeg'], key=f"sl_file_{slip_key}", accept_multiple_files=True)
                         if uploaded_slips:
-                            df_meta = df_meta[~((df_meta["trip"] == current_trip) & (df_meta["category"] == "slip") & (df_meta["key"] == slip_key))]
-                            new_slips = [{"trip": current_trip, "category": "slip", "key": slip_key, "value": base64.b64encode(s.getvalue()).decode("utf-8")} for s in uploaded_slips]
-                            df_meta = pd.concat([df_meta, pd.DataFrame(new_slips)], ignore_index=True)
-                            conn.update(worksheet="metadata", data=df_meta)
-                            st.rerun()
+                            try:
+                                df_meta = df_meta[~((df_meta["trip"] == current_trip) & (df_meta["category"] == "slip") & (df_meta["key"] == slip_key))]
+                                # 🌟 เรียกใช้ฟังก์ชันบีบอัดรูปก่อนเซฟ
+                                new_slips = []
+                                for s in uploaded_slips:
+                                    compressed_b64 = compress_image(s)
+                                    if len(compressed_b64) < 49000:
+                                        new_slips.append({"trip": current_trip, "category": "slip", "key": slip_key, "value": compressed_b64})
+                                    else:
+                                        st.error("ภาพยังมีขนาดใหญ่เกินไปแม้บีบอัดแล้ว กรุณาครอปภาพให้เล็กลงครับ")
+                                
+                                if new_slips:
+                                    df_meta = pd.concat([df_meta, pd.DataFrame(new_slips)], ignore_index=True)
+                                    conn.update(worksheet="metadata", data=df_meta)
+                                    st.rerun()
+                            except Exception as e:
+                                st.error(f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {e}")
                         
                         if not slip_rows.empty:
                             for idx, s_row in enumerate(slip_rows.itertuples()):
@@ -276,13 +301,20 @@ if st.session_state.current_trip:
                         qr_row = df_meta[(df_meta["trip"] == current_trip) & (df_meta["category"] == "qr") & (df_meta["key"] == creditor)]
                         uploaded_qr = st.file_uploader("อัปโหลด QR Code ประจำตัว", type=['png', 'jpg', 'jpeg'], key=f"qr_file_{creditor}")
                         if uploaded_qr is not None:
-                            qr_base64 = base64.b64encode(uploaded_qr.getvalue()).decode("utf-8")
-                            if not qr_row.empty:
-                                df_meta.loc[(df_meta["trip"] == current_trip) & (df_meta["category"] == "qr") & (df_meta["key"] == creditor), "value"] = qr_base64
-                            else:
-                                df_meta = pd.concat([df_meta, pd.DataFrame([{"trip": current_trip, "category": "qr", "key": creditor, "value": qr_base64}])], ignore_index=True)
-                            conn.update(worksheet="metadata", data=df_meta)
-                            st.rerun()
+                            try:
+                                # 🌟 เรียกใช้ฟังก์ชันบีบอัดรูปก่อนเซฟ QR Code
+                                compressed_qr = compress_image(uploaded_qr)
+                                if len(compressed_qr) < 49000:
+                                    if not qr_row.empty:
+                                        df_meta.loc[(df_meta["trip"] == current_trip) & (df_meta["category"] == "qr") & (df_meta["key"] == creditor), "value"] = compressed_qr
+                                    else:
+                                        df_meta = pd.concat([df_meta, pd.DataFrame([{"trip": current_trip, "category": "qr", "key": creditor, "value": compressed_qr}])], ignore_index=True)
+                                    conn.update(worksheet="metadata", data=df_meta)
+                                    st.rerun()
+                                else:
+                                    st.error("QR Code มีขนาดใหญ่เกินไป กรุณาครอปเฉพาะตัวบาร์โค้ดครับ")
+                            except Exception as e:
+                                st.error(f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {e}")
                             
                         if not qr_row.empty and qr_row["value"].values[0]:
                             try: st.image(base64.b64decode(qr_row["value"].values[0]), width=180)
