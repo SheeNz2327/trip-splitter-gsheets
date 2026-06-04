@@ -60,12 +60,12 @@ if 'delete_confirm_id' not in st.session_state:
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
-    df_exp = conn.read(worksheet="expenses", ttl=0).dropna(subset=["id"])
+    df_exp = conn.read(worksheet="expenses", ttl=15).dropna(subset=["id"])
 except Exception:
     df_exp = pd.DataFrame(columns=["trip", "id", "item", "amount", "payer", "involved", "settled"])
 
 try:
-    df_meta = conn.read(worksheet="metadata", ttl=0).dropna(subset=["trip", "category"])
+    df_meta = conn.read(worksheet="metadata", ttl=15).dropna(subset=["trip", "category"])
 except Exception:
     df_meta = pd.DataFrame(columns=["trip", "category", "key", "value"])
 
