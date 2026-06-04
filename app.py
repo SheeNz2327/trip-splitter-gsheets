@@ -4,10 +4,10 @@ from streamlit_gsheets import GSheetsConnection
 import uuid
 import base64
 
-# 1. ตั้งค่าหน้าเว็บ
+# 1. ตั้งค่าหน้าเว็บ[cite: 1]
 st.set_page_config(page_title="Trip Splitter Cloud", page_icon="🧳", layout="centered")
 
-# 2. ฝัง Custom CSS สไตล์ Soft Purple
+# 2. ฝัง Custom CSS สไตล์ Soft Purple[cite: 1]
 custom_css = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -29,7 +29,11 @@ custom_css = """
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# 3. เชื่อมต่อ Google Sheets สดแบบ Real-time
+# เตรียมพื้นที่จำลองสำหรับเก็บสถานะการยืนยันลบ
+if 'delete_confirm_id' not in st.session_state:
+    st.session_state.delete_confirm_id = None
+
+# 3. เชื่อมต่อ Google Sheets สดแบบ Real-time[cite: 1]
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
@@ -42,7 +46,7 @@ try:
 except Exception:
     df_meta = pd.DataFrame(columns=["trip", "category", "key", "value"])
 
-# ตรวจสอบทริปตั้งต้น
+# ตรวจสอบทริปตั้งต้น[cite: 1]
 all_trips = df_meta["trip"].unique().tolist()
 if not all_trips:
     all_trips = ["ทริปพัทยา"]
@@ -55,7 +59,7 @@ if not all_trips:
 if 'current_trip' not in st.session_state or st.session_state.current_trip not in all_trips:
     st.session_state.current_trip = all_trips[0]
 
-# 4. เมนูด้านข้าง (Sidebar) จัดการทริป
+# 4. เมนูด้านข้าง (Sidebar) จัดการทริป[cite: 1]
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3176/3176366.png", width=50)
     st.header("Trips Management")
@@ -84,14 +88,14 @@ with st.sidebar:
         st.session_state.current_trip = None
         st.rerun()
 
-# 5. พื้นที่หลักทำงานตามทริป
+# 5. พื้นที่หลักทำงานตามทริป[cite: 1]
 if st.session_state.current_trip:
     current_trip = st.session_state.current_trip
     st.title(f"✨ {current_trip}")
     
     tab_members, tab_expenses, tab_summary = st.tabs(["👥 จัดการสมาชิก", "📝 บันทึกบิล", "📊 สรุปยอดและโอนเงิน"])
     
-    # ================= แท็บ 1: จัดการสมาชิก =================
+    # ================= แท็บ 1: จัดการสมาชิก[cite: 1] =================
     with tab_members:
         st.subheader("รายชื่อผู้ร่วมทริปในปัจจุบัน")
         active_members = df_meta[(df_meta["trip"] == current_trip) & (df_meta["category"] == "member")]["value"].tolist()
@@ -113,7 +117,7 @@ if st.session_state.current_trip:
                 conn.update(worksheet="metadata", data=df_meta)
                 st.rerun()
 
-    # ================= แท็บ 2: บันทึกบิลค่าใช้จ่าย =================
+    # ================= แท็บ 2: บันทึกบิลค่าใช้จ่าย[cite: 1] =================
     with tab_expenses:
         df_trip_exp = df_exp[df_exp["trip"] == current_trip]
         if not active_members:
@@ -154,13 +158,26 @@ if st.session_state.current_trip:
                 with box_col:
                     status = "🟢 [เคลียร์หน้างานแล้ว]" if row["settled"] == "TRUE" else "⏳ [ค้างเคลียร์ยอด]"
                     st.info(f"**{row['item']}** ({float(row['amount']):,.2f} บาท) {status}\n\n👤 จ่ายโดย: {row['payer']} | 👥 หาร: {row['involved']}")
+                
                 with del_col:
-                    if st.button("❌", key=f"del_exp_{row['id']}"):
-                        df_exp = df_exp[df_exp["id"] != row["id"]]
-                        conn.update(worksheet="expenses", data=df_exp)
-                        st.rerun()
+                    # ระบบยืนยันการลบที่เพิ่มเข้ามาใหม่
+                    if st.session_state.delete_confirm_id == row['id']:
+                        st.write("⚠️ ลบ?")
+                        c1, c2 = st.columns(2)
+                        if c1.button("✅", key=f"conf_y_{row['id']}", help="ยืนยันการลบ"):
+                            df_exp = df_exp[df_exp["id"] != row["id"]]
+                            conn.update(worksheet="expenses", data=df_exp)
+                            st.session_state.delete_confirm_id = None
+                            st.rerun()
+                        if c2.button("❌", key=f"conf_n_{row['id']}", help="ยกเลิก"):
+                            st.session_state.delete_confirm_id = None
+                            st.rerun()
+                    else:
+                        if st.button("❌", key=f"del_exp_{row['id']}", help="กดเพื่อลบรายการนี้"):
+                            st.session_state.delete_confirm_id = row['id']
+                            st.rerun()
 
-    # ================= แท็บ 3: สรุปยอดและโอนเงิน =================
+    # ================= แท็บ 3: สรุปยอดและโอนเงิน[cite: 1] =================
     with tab_summary:
         df_trip_exp = df_exp[df_exp["trip"] == current_trip]
         if df_trip_exp.empty:
@@ -203,7 +220,7 @@ if st.session_state.current_trip:
                 table_view = [{"ผู้โอน (🔴)": t["from"], "ผู้รับเงิน (🟢)": t["to"], "ยอดโอน": f"{t['amount']:,.2f} ฿"} for t in transfer_list]
                 st.dataframe(pd.DataFrame(table_view), use_container_width=True, hide_index=True)
                 
-                # --- ส่วนแนบหลักฐานสลิปหลายไฟล์ ---
+                # --- ส่วนแนบหลักฐานสลิปหลายไฟล์[cite: 1] ---
                 st.divider()
                 st.subheader("📤 แนบสลิปยืนยันการโอนเงิน")
                 for t in transfer_list:
@@ -211,7 +228,7 @@ if st.session_state.current_trip:
                     slip_rows = df_meta[(df_meta["trip"] == current_trip) & (df_meta["category"] == "slip") & (df_meta["key"] == slip_key)]
                     
                     with st.expander(f"🧾 สลิปจาก {t['from']} โอนให้ {t['to']} ({t['amount']:,.2f} ฿)"):
-                        uploaded_slips = st.file_uploader("เลือกรูปสลิปจากมือถือ (แนบพร้อมกันหลายรูปได้)", type=['png', 'jpg', 'jpeg'], key=f"sl_file_{slip_key}", accept_multiple_files=True)
+                        uploaded_slips = st.file_uploader("เลือกรูปสลิปจากมือถือ", type=['png', 'jpg', 'jpeg'], key=f"sl_file_{slip_key}", accept_multiple_files=True)
                         if uploaded_slips:
                             df_meta = df_meta[~((df_meta["trip"] == current_trip) & (df_meta["category"] == "slip") & (df_meta["key"] == slip_key))]
                             new_slips = [{"trip": current_trip, "category": "slip", "key": slip_key, "value": base64.b64encode(s.getvalue()).decode("utf-8")} for s in uploaded_slips]
@@ -229,7 +246,7 @@ if st.session_state.current_trip:
                                 conn.update(worksheet="metadata", data=df_meta)
                                 st.rerun()
 
-                # --- ส่วนข้อมูลพร้อมเพย์ / QR เจ้าหนี้ ---
+                # --- ส่วนข้อมูลพร้อมเพย์ / QR เจ้าหนี้[cite: 1] ---
                 st.divider()
                 st.subheader("📱 ช่องทางรับเงิน (สำหรับผู้รับเงิน)")
                 unique_creditors = list(set([t["to"] for t in transfer_list]))
