@@ -153,11 +153,11 @@ if st.session_state.current_trip:
         if df_trip_exp.empty:
             st.info("ยังไม่มีการบันทึกบิลครับ")
         else:
-            # 🌟 ไฮไลต์จุดแก้ไข: เพิ่มคำสั่ง .iloc[::-1] เพื่อสลับเอาบิลแถวใหม่สุดขึ้นด้านบนก่อนเสมอนะครับ
             for idx, row in df_trip_exp.iloc[::-1].iterrows():
                 box_col, del_col = st.columns([5, 1])
                 with box_col:
-                    status = "🟢 [เคลียร์หน้างานแล้ว]" if row["settled"] == "TRUE" else "⏳ [ค้างเคลียร์ยอด]"
+                    # 🌟 ปรับแก้จุดตรวจสอบตรงนี้ให้รองรับค่า Boolean จาก Google Sheets ครับ
+                    status = "🟢 [เคลียร์หน้างานแล้ว]" if str(row["settled"]).upper() == "TRUE" else "⏳ [ค้างเคลียร์ยอด]"
                     st.info(f"**{row['item']}** ({float(row['amount']):,.2f} บาท) {status}\n\n👤 จ่ายโดย: {row['payer']} | 👥 หาร: {row['involved']}")
                 
                 with del_col:
@@ -189,7 +189,8 @@ if st.session_state.current_trip:
             for idx, row in df_trip_exp.iterrows():
                 amt = float(row["amount"])
                 total_trip_cost += amt
-                if row["settled"] == "TRUE": continue
+                # 🌟 ปรับแก้จุดคัดกรองหนี้สินตรงนี้ด้วยเช่นกันครับ เพื่อให้ข้ามบิลที่จ่ายแล้วได้ถูกต้อง
+                if str(row["settled"]).upper() == "TRUE": continue
                 
                 inv_list = [p.strip() for p in row["involved"].split(",") if p.strip() in balances]
                 if not inv_list: continue
