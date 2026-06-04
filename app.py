@@ -29,6 +29,14 @@ custom_css = """
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
+# 🌟 ฟังก์ชันดักจับสถานะ บล็อกบั๊กการแปลงค่าเพี้ยนของ Google Sheets
+def is_settled_true(val):
+    if pd.isna(val):
+        return False
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().upper() in ["TRUE", "1", "1.0"]
+
 # เตรียมพื้นที่จำลองสำหรับเก็บสถานะการยืนยันลบ
 if 'delete_confirm_id' not in st.session_state:
     st.session_state.delete_confirm_id = None
@@ -156,8 +164,8 @@ if st.session_state.current_trip:
             for idx, row in df_trip_exp.iloc[::-1].iterrows():
                 box_col, del_col = st.columns([5, 1])
                 with box_col:
-                    # 🌟 ปรับแก้จุดตรวจสอบตรงนี้ให้รองรับค่า Boolean จาก Google Sheets ครับ
-                    status = "🟢 [เคลียร์หน้างานแล้ว]" if str(row["settled"]).upper() == "TRUE" else "⏳ [ค้างเคลียร์ยอด]"
+                    # 🌟 เรียกใช้ฟังก์ชันตรวจสอบแบบดักทุกทางในหน้าประวัติบิล
+                    status = "🟢 [เคลียร์หน้างานแล้ว]" if is_settled_true(row["settled"]) else "⏳ [ค้างเคลียร์ยอด]"
                     st.info(f"**{row['item']}** ({float(row['amount']):,.2f} บาท) {status}\n\n👤 จ่ายโดย: {row['payer']} | 👥 หาร: {row['involved']}")
                 
                 with del_col:
@@ -189,8 +197,8 @@ if st.session_state.current_trip:
             for idx, row in df_trip_exp.iterrows():
                 amt = float(row["amount"])
                 total_trip_cost += amt
-                # 🌟 ปรับแก้จุดคัดกรองหนี้สินตรงนี้ด้วยเช่นกันครับ เพื่อให้ข้ามบิลที่จ่ายแล้วได้ถูกต้อง
-                if str(row["settled"]).upper() == "TRUE": continue
+                # 🌟 เรียกใช้ฟังก์ชันตรวจสอบแบบดักทุกทางในระบบคำนวณหนี้สิน (บิลที่จ่ายแล้วจะไม่นำมาคิดหนี้)
+                if is_settled_true(row["settled"]): continue
                 
                 inv_list = [p.strip() for p in row["involved"].split(",") if p.strip() in balances]
                 if not inv_list: continue
