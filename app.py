@@ -6,10 +6,11 @@ import base64
 from PIL import Image
 import io
 
-# 1. ตั้งค่าหน้าเว็บ
+# ==========================================
+# 1. ตั้งค่าหน้าเว็บ และ CSS
+# ==========================================
 st.set_page_config(page_title="Trip Splitter Cloud", page_icon="🧳", layout="centered")
 
-# 2. ฝัง Custom CSS สไตล์ Soft Purple
 custom_css = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
@@ -31,32 +32,33 @@ custom_css = """
 """
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# 🌟 ฟังก์ชันบีบอัดรูปภาพให้เล็กลงก่อนส่งเข้า Google Sheets
+# ==========================================
+# 2. ฟังก์ชันช่วยเหลือต่างๆ (Helper Functions)
+# ==========================================
+
+# 🌟 ฟังก์ชันบีบอัดรูปภาพ ป้องกัน Google Sheets พัง
 def compress_image(uploaded_file):
     img = Image.open(uploaded_file)
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
-    # ย่อขนาดให้เหลือความกว้าง/ยาวสูงสุดแค่ 300px
     img.thumbnail((300, 300))
     buffer = io.BytesIO()
-    # บีบอัดคุณภาพเหลือ 40%
     img.save(buffer, format="JPEG", quality=40)
-    b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-    return b64_str
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-# 🌟 ฟังก์ชันดักจับสถานะ บล็อกบั๊กการแปลงค่าเพี้ยนของ Google Sheets
+# 🌟 ฟังก์ชันดักจับสถานะ บล็อกบั๊ก TRUE จาก Google Sheets
 def is_settled_true(val):
-    if pd.isna(val):
-        return False
-    if isinstance(val, bool):
-        return val
+    if pd.isna(val): return False
+    if isinstance(val, bool): return val
     return str(val).strip().upper() in ["TRUE", "1", "1.0"]
 
-# เตรียมพื้นที่จำลองสำหรับเก็บสถานะการยืนยันลบ
+# เตรียมพื้นที่เก็บสถานะการยืนยันลบ
 if 'delete_confirm_id' not in st.session_state:
     st.session_state.delete_confirm_id = None
 
-# 3. เชื่อมต่อ Google Sheets สดแบบ Real-time
+# ==========================================
+# 3. เชื่อมต่อฐานข้อมูล (ดึงข้อมูลแบบมี Cache 15 วิ)
+# ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
@@ -69,7 +71,7 @@ try:
 except Exception:
     df_meta = pd.DataFrame(columns=["trip", "category", "key", "value"])
 
-# ตรวจสอบทริปตั้งต้น
+# สร้างข้อมูลเริ่มต้นถ้ายังไม่มีทริปเลย
 all_trips = df_meta["trip"].unique().tolist()
 if not all_trips:
     all_trips = ["ทริปพัทยา"]
@@ -77,12 +79,15 @@ if not all_trips:
     new_rows = [{"trip": "ทริปพัทยา", "category": "member", "key": "", "value": m} for m in default_members]
     df_meta = pd.concat([df_meta, pd.DataFrame(new_rows)], ignore_index=True)
     conn.update(worksheet="metadata", data=df_meta)
+    st.cache_data.clear()
     st.rerun()
 
 if 'current_trip' not in st.session_state or st.session_state.current_trip not in all_trips:
     st.session_state.current_trip = all_trips[0]
 
+# ==========================================
 # 4. เมนูด้านข้าง (Sidebar) จัดการทริป
+# ==========================================
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3176/3176366.png", width=50)
     st.header("Trips Management")
@@ -95,12 +100,14 @@ with st.sidebar:
             conn.update(worksheet="metadata", data=df_meta)
             st.session_state.current_trip = new_trip.strip()
             st.success("สร้างทริปสำเร็จ!")
+            st.cache_data.clear()
             st.rerun()
 
     st.divider()
     selected_trip = st.selectbox("📌 เลือกทริปปัจจุบัน", all_trips, index=all_trips.index(st.session_state.current_trip))
     if selected_trip != st.session_state.current_trip:
         st.session_state.current_trip = selected_trip
+        st.cache_data.clear()
         st.rerun()
 
     if st.button("🗑️ ลบทริปนี้ทิ้ง", type="secondary", use_container_width=True):
@@ -109,16 +116,19 @@ with st.sidebar:
         conn.update(worksheet="metadata", data=df_meta)
         conn.update(worksheet="expenses", data=df_exp)
         st.session_state.current_trip = None
+        st.cache_data.clear()
         st.rerun()
 
-# 5. พื้นที่หลักทำงานตามทริป
+# ==========================================
+# 5. พื้นที่หลักทำงานตามทริป (Main Content)
+# ==========================================
 if st.session_state.current_trip:
     current_trip = st.session_state.current_trip
     st.title(f"✨ {current_trip}")
     
     tab_members, tab_expenses, tab_summary = st.tabs(["👥 จัดการสมาชิก", "📝 บันทึกบิล", "📊 สรุปยอดและโอนเงิน"])
     
-    # ================= แท็บ 1: จัดการสมาชิก =================
+    # ------------------ แท็บ 1: จัดการสมาชิก ------------------
     with tab_members:
         st.subheader("รายชื่อผู้ร่วมทริปในปัจจุบัน")
         active_members = df_meta[(df_meta["trip"] == current_trip) & (df_meta["category"] == "member")]["value"].tolist()
@@ -130,6 +140,7 @@ if st.session_state.current_trip:
                 if st.button("❌ ลบ", key=f"del_mem_{name}"):
                     df_meta = df_meta[~((df_meta["trip"] == current_trip) & (df_meta["category"] == "member") & (df_meta["value"] == name))]
                     conn.update(worksheet="metadata", data=df_meta)
+                    st.cache_data.clear()
                     st.rerun()
         st.write("---")
         add_name = st.text_input("เพิ่มชื่อเพื่อนผู้ร่วมทริปใหม่")
@@ -138,9 +149,10 @@ if st.session_state.current_trip:
                 new_row = pd.DataFrame([{"trip": current_trip, "category": "member", "key": "", "value": add_name.strip()}])
                 df_meta = pd.concat([df_meta, new_row], ignore_index=True)
                 conn.update(worksheet="metadata", data=df_meta)
+                st.cache_data.clear()
                 st.rerun()
 
-    # ================= แท็บ 2: บันทึกบิลค่าใช้จ่าย =================
+    # ------------------ แท็บ 2: บันทึกบิลค่าใช้จ่าย ------------------
     with tab_expenses:
         df_trip_exp = df_exp[df_exp["trip"] == current_trip]
         if not active_members:
@@ -157,7 +169,7 @@ if st.session_state.current_trip:
             col_p, col_i = st.columns(2)
             with col_p: payer = st.selectbox("ใครออกเงินไปก่อน?", active_members)
             with col_i: involved = st.multiselect("ใครต้องหารบิลนี้?", active_members, default=active_members)
-            is_settled = st.checkbox("✅ จ่ายแยก/เคลียร์เงินกันเสร็จสิ้นแล้ว (บันทึกไว้ดูยอดรวมทริปเท่านั้น ไม่นำไปคำนวณสัญญากู้หนี้นะจ๊ะ อะฮิๆ)")
+            is_settled = st.checkbox("✅ จ่ายแยก/เคลียร์เงินกันเสร็จสิ้นแล้ว (บันทึกไว้ดูยอดรวมทริปเท่านั้น ไม่นำไปคำนวณหนี้นะจ๊ะ อะฮิๆ)")
 
             if st.button("เก็บบิลนี้", type="primary", use_container_width=True):
                 if item and amount > 0 and involved:
@@ -169,6 +181,7 @@ if st.session_state.current_trip:
                     df_exp = pd.concat([df_exp, new_row], ignore_index=True)
                     conn.update(worksheet="expenses", data=df_exp)
                     st.success("บันทึกบิลลง Google Sheets สำเร็จ!")
+                    st.cache_data.clear() # 🌟 ล้างแคชเพื่อให้บิลใหม่โชว์ทันที
                     st.rerun()
 
         st.divider()
@@ -176,6 +189,7 @@ if st.session_state.current_trip:
         if df_trip_exp.empty:
             st.info("ยังไม่มีการบันทึกบิลครับ")
         else:
+            # 🌟 เรียงบิลใหม่ล่าสุดขึ้นก่อน
             for idx, row in df_trip_exp.iloc[::-1].iterrows():
                 box_col, del_col = st.columns([5, 1])
                 with box_col:
@@ -183,23 +197,25 @@ if st.session_state.current_trip:
                     st.info(f"**{row['item']}** ({float(row['amount']):,.2f} บาท) {status}\n\n👤 จ่ายโดย: {row['payer']} | 👥 หาร: {row['involved']}")
                 
                 with del_col:
+                    # 🌟 ระบบยืนยันก่อนลบ (Two-step Delete)
                     if st.session_state.delete_confirm_id == row['id']:
                         st.write("⚠️ ลบ?")
                         c1, c2 = st.columns(2)
-                        if c1.button("✅", key=f"conf_y_{row['id']}", help="ยืนยันการลบ"):
+                        if c1.button("✅", key=f"conf_y_{row['id']}"):
                             df_exp = df_exp[df_exp["id"] != row["id"]]
                             conn.update(worksheet="expenses", data=df_exp)
                             st.session_state.delete_confirm_id = None
+                            st.cache_data.clear()
                             st.rerun()
-                        if c2.button("❌", key=f"conf_n_{row['id']}", help="ยกเลิก"):
+                        if c2.button("❌", key=f"conf_n_{row['id']}"):
                             st.session_state.delete_confirm_id = None
                             st.rerun()
                     else:
-                        if st.button("❌", key=f"del_exp_{row['id']}", help="กดเพื่อลบรายการนี้"):
+                        if st.button("❌", key=f"del_exp_{row['id']}"):
                             st.session_state.delete_confirm_id = row['id']
                             st.rerun()
 
-    # ================= แท็บ 3: สรุปยอดและโอนเงิน =================
+    # ------------------ แท็บ 3: สรุปยอดและโอนเงิน ------------------
     with tab_summary:
         df_trip_exp = df_exp[df_exp["trip"] == current_trip]
         if df_trip_exp.empty:
@@ -254,7 +270,6 @@ if st.session_state.current_trip:
                         if uploaded_slips:
                             try:
                                 df_meta = df_meta[~((df_meta["trip"] == current_trip) & (df_meta["category"] == "slip") & (df_meta["key"] == slip_key))]
-                                # 🌟 เรียกใช้ฟังก์ชันบีบอัดรูปก่อนเซฟ
                                 new_slips = []
                                 for s in uploaded_slips:
                                     compressed_b64 = compress_image(s)
@@ -266,18 +281,19 @@ if st.session_state.current_trip:
                                 if new_slips:
                                     df_meta = pd.concat([df_meta, pd.DataFrame(new_slips)], ignore_index=True)
                                     conn.update(worksheet="metadata", data=df_meta)
+                                    st.cache_data.clear()
                                     st.rerun()
                             except Exception as e:
                                 st.error(f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {e}")
                         
                         if not slip_rows.empty:
                             for idx, s_row in enumerate(slip_rows.itertuples()):
-                                try:
-                                    st.image(base64.b64decode(s_row.value), width=230, caption=f"ใบที่ {idx+1}")
-                                except Exception: st.write("ไม่สามารถแสดงรูปภาพได้")
+                                try: st.image(base64.b64decode(s_row.value), width=230, caption=f"ใบที่ {idx+1}")
+                                except Exception: pass
                             if st.button("🗑️ ลบสลิปทั้งหมด", key=f"del_slips_{slip_key}"):
                                 df_meta = df_meta[~((df_meta["trip"] == current_trip) & (df_meta["category"] == "slip") & (df_meta["key"] == slip_key))]
                                 conn.update(worksheet="metadata", data=df_meta)
+                                st.cache_data.clear()
                                 st.rerun()
 
                 # --- ส่วนข้อมูลพร้อมเพย์ / QR เจ้าหนี้ ---
@@ -296,13 +312,13 @@ if st.session_state.current_trip:
                             else:
                                 df_meta = pd.concat([df_meta, pd.DataFrame([{"trip": current_trip, "category": "payment", "key": creditor, "value": pp_val}])], ignore_index=True)
                             conn.update(worksheet="metadata", data=df_meta)
+                            st.cache_data.clear()
                             st.rerun()
                             
                         qr_row = df_meta[(df_meta["trip"] == current_trip) & (df_meta["category"] == "qr") & (df_meta["key"] == creditor)]
                         uploaded_qr = st.file_uploader("อัปโหลด QR Code ประจำตัว", type=['png', 'jpg', 'jpeg'], key=f"qr_file_{creditor}")
                         if uploaded_qr is not None:
                             try:
-                                # 🌟 เรียกใช้ฟังก์ชันบีบอัดรูปก่อนเซฟ QR Code
                                 compressed_qr = compress_image(uploaded_qr)
                                 if len(compressed_qr) < 49000:
                                     if not qr_row.empty:
@@ -310,11 +326,12 @@ if st.session_state.current_trip:
                                     else:
                                         df_meta = pd.concat([df_meta, pd.DataFrame([{"trip": current_trip, "category": "qr", "key": creditor, "value": compressed_qr}])], ignore_index=True)
                                     conn.update(worksheet="metadata", data=df_meta)
+                                    st.cache_data.clear()
                                     st.rerun()
                                 else:
                                     st.error("QR Code มีขนาดใหญ่เกินไป กรุณาครอปเฉพาะตัวบาร์โค้ดครับ")
                             except Exception as e:
-                                st.error(f"เกิดข้อผิดพลาดในการประมวลผลรูปภาพ: {e}")
+                                st.error(f"เกิดข้อผิดพลาด: {e}")
                             
                         if not qr_row.empty and qr_row["value"].values[0]:
                             try: st.image(base64.b64decode(qr_row["value"].values[0]), width=180)
@@ -322,6 +339,7 @@ if st.session_state.current_trip:
                             if st.button("ลบ QR", key=f"del_qr_{creditor}"):
                                 df_meta = df_meta[~((df_meta["trip"] == current_trip) & (df_meta["category"] == "qr") & (df_meta["key"] == creditor))]
                                 conn.update(worksheet="metadata", data=df_meta)
+                                st.cache_data.clear()
                                 st.rerun()
             else:
                 st.success("🎉 ทุกคนเจ๊ากันพอดี ไม่ต้องโอนเงินครับ!")
